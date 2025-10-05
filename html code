@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Ticket Booking — Seat Lock & Confirm (HTML only)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root{
+      --bg:#0b0b0b; --panel:#0f1720; --card:#111827; --accent:#10b981;
+      --muted:#9ca3af; --danger:#ef4444; --locked:#f59e0b;
+    }
+    *{box-sizing:border-box;font-family:Inter, system-ui, "Segoe UI", Roboto, Arial;}
+    body{margin:0; background:linear-gradient(180deg,#071028 0%,var(--bg) 100%); color:#e6eef6; padding:28px;}
+    .wrap{max-width:980px;margin:0 auto;}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    header h1{font-size:20px;margin:0;color:#fff}
+    header p{margin:0;color:var(--muted);font-size:13px}
+
+    .seats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-top:18px;}
+    .seat{
+      background:linear-gradient(180deg,#0b1220,#0b1418);
+      border:1px solid rgba(255,255,255,0.04);
+      padding:12px;border-radius:10px;
+      display:flex;flex-direction:column;align-items:center;gap:8px;
+      box-shadow:0 6px 18px rgba(2,6,23,0.6);
+    }
+    .seat h3{margin:0;font-size:18px;}
+    .status{font-size:13px;padding:6px 10px;border-radius:999px}
+    .status.available{background:rgba(16,185,129,0.12);color:var(--accent);border:1px solid rgba(16,185,129,0.08)}
+    .status.locked{background:rgba(245,158,11,0.08); color:var(--locked); border:1px solid rgba(245,158,11,0.06)}
+    .status.booked{background:rgba(239,68,68,0.08); color:var(--danger); border:1px solid rgba(239,68,68,0.06)}
+    .actions{display:flex;gap:8px;margin-top:6px}
+    button{
+      padding:8px 10px;border-radius:8px;border:0;font-weight:600;cursor:pointer;
+      background:#111827;color:#e6eef6;box-shadow:0 6px 10px rgba(2,6,23,0.5);
+    }
+    button.lock{background:#1f2937}
+    button.confirm{background:#063b2f;color:#bbf7d0}
+    button[disabled]{opacity:0.45;cursor:not-allowed}
+
+    .log{
+      margin-top:22px;background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;
+      min-height:70px;border:1px solid rgba(255,255,255,0.02);
+    }
+    .log-item{font-family:monospace;font-size:13px;margin-bottom:6px}
+    .small{font-size:12px;color:var(--muted)}
+    .controls{display:flex;gap:8px;align-items:center}
+    .sim-btn{background:#0b1228;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);color:var(--muted)}
+    footer{margin-top:18px;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Concurrent Ticket Booking — Demo (HTML only)</h1>
+        <p class="small">Seat locking for 1 minute. Locks expire automatically if not confirmed.</p>
+      </div>
+      <div class="controls">
+        <button id="reset" class="sim-btn">Reset seats</button>
+        <button id="bulkLock" class="sim-btn">Simulate concurrent locks</button>
+      </div>
+    </header>
+
+    <section id="seats" class="seats-grid" aria-live="polite"></section>
+
+    <div class="log" id="log" aria-live="polite">
+      <div class="log-item">Server simulation log (actions & responses)</div>
+    </div>
+
+    <footer>
+      <div class="small">This is a static HTML + JS simulation that mimics the API behaviour you had: endpoints /lock/:id and /confirm/:id. No backend required.</div>
+    </footer>
+  </div>
+
+  <script>
+    // ---------- Configuration ----------
+    const TOTAL_SEATS = 10;
+    const LOCK_DURATION_MS = 60 * 1000; // 1 minute
+
+    // ---------- In-memory seat store ----------
+    const seats = {}; // { id: { status: 'available'|'locked'|'booked', lockUntil: timestamp|null } }
+
+    // ---------- DOM refs ----------
+    const seatsContainer = document.getElementById('seats');
+    const logEl = document.getElementById('log');
+    const resetBtn = document.getElementById('reset');
+    const bulkLockBtn = document.getElementById('bulkLock');
+
+    // ---------- Helpers ----------
+    function now() { return Date.now(); }
+    function formatTime(ts) {
+      const d = new Date(ts);
+      return d.toLocaleTimeString();
+    }
+    function addLog(text, type='info') {
+      const el = document.createElement('div');
+      el.className = 'log-item';
+      el.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
+      logEl.insertBefore(el, logEl.firstChild);
+    }
+
+    function refreshExpiredLocks() {
+      for (const id in seats) {
+        const s = seats[id];
+        if (s.status === 'locked' && s.lockUntil && now() > s.lockUntil) {
+          // expire
+          s.status = 'available';
+          s.lockUntil = null;
+          addLog(`Lock expired: Seat ${id} -> available`);
+        }
+      }
+    }
+
+    // ---------- UI rendering ----------
+    function renderSeats() {
+      refreshExpiredLocks();
+      seatsContainer.innerHTML = '';
+      for (let i = 1; i <= TOTAL_SEATS; i++) {
+        const s = seats[i];
+        const card = document.createElement('div');
+        card.className = 'seat';
+        const title = document.createElement('h3');
+        title.textContent = `Seat ${i}`;
+        const status = document.createElement('div');
+        status.className = 'status ' + s.status;
+        if (s.status === 'locked') {
+          const remaining = Math.max(0, Math.ceil((s.lockUntil - now())/1000));
+          status.textContent = `locked • ${remaining}s left`;
+        } else {
+          status.textContent = s.status;
+        }
+
+        const actions = document.createElement('div');
+        actions.className = 'actions';
+
+        const lockBtn = document.createElement('button');
+        lockBtn.className = 'lock';
+        lockBtn.textContent = 'Lock';
+        lockBtn.onclick = () => simulateApiLock(i);
+
+        const confirmBtn = document.createElement('button');
+        confirmBtn.className = 'confirm';
+        confirmBtn.textContent = 'Confirm';
+        confirmBtn.onclick = () => simulateApiConfirm(i);
+
+        // enable/disable logic
+        if (s.status === 'available') {
+          lockBtn.disabled = false;
+          confirmBtn.disabled = true;
+        } else if (s.status === 'locked') {
+          // if locked but expired we handled above
+          lockBtn.disabled = true;
+          confirmBtn.disabled = false;
+        } else if (s.status === 'booked') {
+          lockBtn.disabled = true;
+          confirmBtn.disabled = true;
+        }
+
+        actions.appendChild(lockBtn);
+        actions.appendChild(confirmBtn);
+
+        card.appendChild(title);
+        card.appendChild(status);
+        card.appendChild(actions);
+        seatsContainer.appendChild(card);
+      }
+    }
+
+    // ---------- "API" simulation ----------
+    // mimic POST /lock/:id
+    function simulateApiLock(id) {
+      // refresh expired locks first
+      refreshExpiredLocks();
+
+      const s = seats[id];
+      if (!s) { addLog(`Error: Seat ${id} not found`); return; }
+
+      if (s.status === 'booked') {
+        // 400 already booked
+        addLog(`400 Bad Request — Seat ${id} is already booked`);
+        alert(`Seat ${id} is already booked`);
+        renderSeats();
+        return;
+      }
+
+      if (s.status === 'locked') {
+        // check expiry
+        if (s.lockUntil && now() <= s.lockUntil) {
+          addLog(`400 Bad Request — Seat ${id} is already locked`);
+          alert(`Seat ${id} is already locked`);
+          renderSeats();
+          return;
+        } else {
+          // expired — treat as available (we already expired above)
+        }
+      }
+
+      // Success: lock the seat
+      s.status = 'locked';
+      s.lockUntil = now() + LOCK_DURATION_MS;
+      addLog(`200 OK — Seat ${id} locked successfully. Confirm within 1 minute.`);
+      renderSeats();
+
+      // Optional: automatically expire after lock duration (UI keeps in sync via interval)
+      setTimeout(() => {
+        // only change if still locked and time passed
+        if (s.status === 'locked' && s.lockUntil && now() > s.lockUntil) {
+          s.status = 'available';
+          s.lockUntil = null;
+          addLog(`Lock auto-expired for Seat ${id}`);
+          renderSeats();
+        }
+      }, LOCK_DURATION_MS + 200);
+    }
+
+    // mimic POST /confirm/:id
+    function simulateApiConfirm(id) {
+      // refresh expired locks first
+      refreshExpiredLocks();
+
+      const s = seats[id];
+      if (!s) { addLog(`Error: Seat ${id} not found`); return; }
+
+      if (s.status === 'booked') {
+        addLog(`400 Bad Request — Seat ${id} is already booked`);
+        alert(`Seat ${id} is already booked`);
+        renderSeats();
+        return;
+      }
+
+      if (s.status !== 'locked' || (s.lockUntil && now() > s.lockUntil)) {
+        addLog(`400 Bad Request — Seat ${id} is not locked and cannot be booked`);
+        alert(`Seat ${id} is not locked and cannot be booked`);
+        renderSeats();
+        return;
+      }
+
+      // Success: confirm booking
+      s.status = 'booked';
+      s.lockUntil = null;
+      addLog(`200 OK — Seat ${id} booked successfully!`);
+      renderSeats();
+    }
+
+    // ---------- Simulate concurrent attempts ----------
+    // tries to lock the same seat multiple times in quick succession (shows locking prevents double lock)
+    function simulateConcurrentLocks(targetId = 5) {
+      addLog(`Simulating concurrent lock attempts on seat ${targetId} (3 attempts)`);
+      // attempt 3 near-simultaneous locks (timeout 0, 10, 20ms)
+      [0,10,20].forEach((delay, idx) => {
+        setTimeout(() => {
+          // small randomized delay to simulate network jitter
+          try {
+            simulateApiLock(targetId);
+            addLog(`Attempt ${idx+1} done`);
+          } catch (e) {
+            addLog(`Attempt ${idx+1} error: ${e.message}`);
+          }
+        }, delay + Math.random()*20);
+      });
+    }
+
+    // ---------- Initialization & controls ----------
+    function initSeats() {
+      for (let i = 1; i <= TOTAL_SEATS; i++) {
+        seats[i] = { status: 'available', lockUntil: null };
+      }
+      addLog('Initialized seats (all available)');
+      renderSeats();
+    }
+
+    resetBtn.addEventListener('click', () => {
+      initSeats();
+    });
+
+    bulkLockBtn.addEventListener('click', () => {
+      simulateConcurrentLocks(5);
+    });
+
+    // Periodic UI refresh to update countdowns and expire locks
+    setInterval(() => {
+      refreshExpiredLocks();
+      renderSeats();
+    }, 1000);
+
+    // start
+    initSeats();
+  </script>
+</body>
+</html>
